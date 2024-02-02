@@ -10,7 +10,7 @@ config.update("jax_enable_x64", True)
 import os
 import sys
 from ripple import ms_to_Mc_eta
-from ripple.waveforms.IMRPhenomD import gen_IMRPhenomD_polar, gen_IMRPhenomD
+from ripple.waveforms.IMRPhenomD import gen_IMRPhenomD_hphc, gen_IMRPhenomD
 from jaxgw.PE.detector_preset import *
 from jaxgw.PE.single_event_likelihood import single_detector_likelihood
 from jaxgw.PE.detector_projection import make_detector_response, get_detector_response
@@ -166,7 +166,7 @@ true_param = jnp.array(
 
 f_list = freqs[freqs > fmin]
 psd_list = [psd_dict["H1"], psd_dict["L1"]]
-waveform_generator = lambda f_, theta_: gen_IMRPhenomD_polar(f_, theta_, f_ref)
+waveform_generator = lambda f_, theta_: gen_IMRPhenomD_hphc(f_, theta_, f_ref)
 hp_real = lambda theta, f: waveform_generator(f, theta)[0].real
 hp_imag = lambda theta, f: waveform_generator(f, theta)[0].imag
 
@@ -276,4 +276,3 @@ plot_contours(F, true_param[:2], fill=False)
 plt.xlabel("Mchirp")
 plt.ylabel("eta")
 plt.savefig("plots/test.pdf", bbox_inches="tight")
-

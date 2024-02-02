@@ -4,7 +4,7 @@ output_path: /Users/thomasedwards/Dropbox/Work/Gravitational_Waves/JaxGW/plots
 
 # Noise parameters
 
-f_sampling: 1024
+f_sampling: 2048
 duration: 16
 fmin: 20
 ifos:
@@ -14,7 +14,7 @@ ifos:
 
 # Injection parameters
 
-Nt: 1000
+Nt: 5000
 mmin: 20.
 mmax: 60.
 chimin: -0.8
