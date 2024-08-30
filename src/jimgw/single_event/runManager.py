@@ -4,12 +4,17 @@ from typing import Union
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import corner
+import sys
+import numpy as np
 import yaml
 from astropy.time import Time
 from jaxlib.xla_extension import ArrayImpl
 from jaxtyping import Array, Float, PyTree
 
-from jimgw import prior
+from jimgw import prior, transforms
+from jimgw.single_event import prior as single_event_prior
+from jimgw.single_event import transforms as single_event_transforms
 from jimgw.base import RunManager
 from jimgw.jim import Jim
 from jimgw.single_event.detector import Detector, detector_preset
@@ -23,44 +28,6 @@ def jaxarray_representer(dumper: yaml.Dumper, data: ArrayImpl):
 
 yaml.add_representer(ArrayImpl, jaxarray_representer)  # type: ignore
 
-prior_presets = {
-    "Unconstrained_Uniform": prior.Unconstrained_Uniform,
-    "Uniform": prior.Uniform,
-    "Sphere": prior.Sphere,
-    "AlignedSpin": prior.AlignedSpin,
-    "PowerLaw": prior.PowerLaw,
-    "Composite": prior.Composite,
-    "MassRatio": lambda **kwargs: prior.Uniform(
-        0.125,
-        1.0,
-        naming=["q"],
-        transforms={"q": ("eta", lambda params: params["q"] / (1 + params["q"]) ** 2)},
-    ),
-    "CosIota": lambda **kwargs: prior.Uniform(
-        -1.0,
-        1.0,
-        naming=["cos_iota"],
-        transforms={
-            "cos_iota": (
-                "iota",
-                lambda params: jnp.arccos(params["cos_iota"]),
-            )
-        },
-    ),
-    "SinDec": lambda **kwargs: prior.Uniform(
-        -1.0,
-        1.0,
-        naming=["sin_dec"],
-        transforms={
-            "sin_dec": (
-                "dec",
-                lambda params: jnp.arcsin(params["sin_dec"]),
-            )
-        },
-    ),
-    "EarthFrame": prior.EarthFrame,
-}
-
 
 @dataclass
 class SingleEventRun:
@@ -71,7 +38,8 @@ class SingleEventRun:
         str, dict[str, Union[str, float, int, bool]]
     ]  # Transform cannot be included in this way, add it to preset if used often.
     jim_parameters: dict[str, Union[str, float, int, bool, dict]]
-    injection_parameters: dict[str, float]
+    path: str = "single_event_run"
+    injection_parameters: dict[str, float] = field(default_factory=lambda: {})
     injection: bool = False
     likelihood_parameters: dict[str, Union[str, float, int, bool, PyTree]] = field(
         default_factory=lambda: {"name": "TransientLikelihoodFD"}
@@ -90,11 +58,18 @@ class SingleEventRun:
             "f_sampling": 4096.0,
         }
     )
+    sample_transforms: list[dict[str, Union[str, float, int, bool]]] = field(
+        default_factory=lambda: []
+    )
+    likelihood_transforms: list[dict[str, Union[str, float, int, bool]]] = field(
+        default_factory=lambda: []
+    )
 
 
 class SingleEventPERunManager(RunManager):
     run: SingleEventRun
     jim: Jim
+    SNRs: list[float]
 
     @property
     def waveform(self):
@@ -123,9 +98,21 @@ class SingleEventPERunManager(RunManager):
             print("Neither run instance nor path provided.")
             raise ValueError
 
+        if self.run.injection and not self.run.injection_parameters:
+            raise ValueError("Injection mode requires injection parameters.")
+
         local_prior = self.initialize_prior()
-        local_likelihood = self.initialize_likelihood(local_prior)
-        self.jim = Jim(local_likelihood, local_prior, **self.run.jim_parameters)
+        sample_transforms, likelihood_transforms = self.initialize_transforms()
+        local_likelihood = self.initialize_likelihood(
+            local_prior, sample_transforms, likelihood_transforms
+        )
+        self.jim = Jim(
+            local_likelihood,
+            local_prior,
+            sample_transforms,
+            likelihood_transforms,
+            **self.run.jim_parameters,
+        )
 
     def save(self, path: str):
         output_dict = asdict(self.run)
@@ -139,7 +126,12 @@ class SingleEventPERunManager(RunManager):
 
     ### Initialization functions ###
 
-    def initialize_likelihood(self, prior: prior.Prior) -> SingleEventLiklihood:
+    def initialize_likelihood(
+        self,
+        prior: prior.CombinePrior,
+        sample_transforms: transforms.Transform,
+        likelihood_transforms: transforms.Transform,
+    ) -> SingleEventLiklihood:
         """
         Since prior contains information about types, naming and ranges of parameters,
         some of the likelihood class require the prior to be initialized, such as the
@@ -150,6 +142,7 @@ class SingleEventPERunManager(RunManager):
         waveform = self.initialize_waveform()
         name = self.run.likelihood_parameters["name"]
         assert isinstance(name, str), "Likelihood name must be a string."
+        assert name in likelihood_presets, f"Likelihood {name} not recognized."
         if self.run.injection:
             freqs = jnp.linspace(
                 self.run.data_parameters["f_min"],
@@ -179,34 +172,87 @@ class SingleEventPERunManager(RunManager):
                 - self.run.data_parameters["post_trigger_duration"],
             }
             key, subkey = jax.random.split(jax.random.PRNGKey(self.run.seed + 1901))
+            SNRs = []
             for detector in detectors:
-                detector.inject_signal(subkey, freqs, h_sky, detector_parameters)  # type: ignore
+                optimal_SNR, _ = detector.inject_signal(subkey, freqs, h_sky, detector_parameters)  # type: ignore
+                SNRs.append(optimal_SNR)
                 key, subkey = jax.random.split(key)
+            self.SNRs = SNRs
+
         return likelihood_presets[name](
             detectors,
             waveform,
             prior=prior,
+            sample_transforms=sample_transforms,
+            likelihood_transforms=likelihood_transforms,
             **self.run.likelihood_parameters,
             **self.run.data_parameters,
         )
 
-    def initialize_prior(self) -> prior.Prior:
+    def initialize_prior(self) -> prior.CombinePrior:
         priors = []
         for name, parameters in self.run.priors.items():
-            if parameters["name"] not in prior_presets:
-                raise ValueError(f"Prior {name} not recognized.")
-            if parameters["name"] == "EarthFrame":
-                priors.append(
-                    prior.EarthFrame(
-                        gps=self.run.data_parameters["trigger_time"],
-                        ifos=self.run.detectors,
+            assert isinstance(
+                parameters, dict
+            ), "Prior parameters must be a dictionary."
+            assert "name" in parameters, "Prior name must be provided."
+            assert isinstance(parameters["name"], str), "Prior name must be a string."
+            try:
+                prior_class = getattr(single_event_prior, parameters["name"])
+            except AttributeError:
+                try:
+                    prior_class = getattr(prior, parameters["name"])
+                except AttributeError:
+                    raise ValueError(f"{parameters['name']} not recognized.")
+            parameters = parameters.copy()
+            parameters.pop("name")
+            priors.append(prior_class(parameter_names=[name], **parameters))
+        return prior.CombinePrior(priors)
+
+    def initialize_transforms(
+        self,
+    ) -> tuple[list[transforms.BijectiveTransform], list[transforms.NtoMTransform]]:
+        sample_transforms = []
+        likelihood_transforms = []
+        if self.run.sample_transforms:
+            for transform in self.run.sample_transforms:
+                assert isinstance(transform, dict), "Transform must be a dictionary."
+                assert "name" in transform, "Transform name must be provided."
+                assert isinstance(
+                    transform["name"], str
+                ), "Transform name must be a string."
+                try:
+                    transform_class = getattr(
+                        single_event_transforms, transform["name"]
                     )
-                )
-            else:
-                priors.append(
-                    prior_presets[parameters["name"]](naming=[name], **parameters)
-                )
-        return prior.Composite(priors)
+                except AttributeError:
+                    try:
+                        transform_class = getattr(transforms, transform["name"])
+                    except AttributeError:
+                        raise ValueError(f"{transform['name']} not recognized.")
+                transform = transform.copy()
+                transform.pop("name")
+                sample_transforms.append(transform_class(**transform))
+        if self.run.likelihood_transforms:
+            for transform in self.run.likelihood_transforms:
+                assert isinstance(transform, dict), "Transform must be a dictionary."
+                assert "name" in transform, "Transform name must be provided."
+                assert isinstance(
+                    transform["name"], str
+                ), "Transform name must be a string."
+                try:
+                    transform_class = getattr(
+                        single_event_transforms, transform["name"]
+                    )
+                except AttributeError:
+                    try:
+                        transform_class = getattr(transforms, transform["name"])
+                    except AttributeError:
+                        raise ValueError(f"{transform['name']} not recognized.")
+                transform = transform.copy()
+                transform.pop("name")
+                likelihood_transforms.append(transform_class(**transform))
+        return sample_transforms, likelihood_transforms
 
     def initialize_detector(self) -> list[Detector]:
         """
@@ -351,3 +397,87 @@ class SingleEventPERunManager(RunManager):
         plt.ylabel("Amplitude")
         plt.legend()
         plt.savefig(path)
+
+    def sample(self):
+        self.jim.sample(jax.random.PRNGKey(self.run.seed))
+
+    def get_samples(self):
+        return self.jim.get_samples()
+
+    def plot_corner(self, path: str = "corner.jpeg", **kwargs):
+        """
+        plot corner plot of the samples.
+        """
+        plot_datapoint = kwargs.get("plot_datapoints", False)
+        title_quantiles = kwargs.get("title_quantiles", [0.16, 0.5, 0.84])
+        show_titles = kwargs.get("show_titles", True)
+        title_fmt = kwargs.get("title_fmt", ".2E")
+        use_math_text = kwargs.get("use_math_text", True)
+
+        samples = self.jim.get_samples()
+        param_names = list(samples.keys())
+        samples = np.array(list(samples.values())).reshape(int(len(param_names)), -1).T
+        corner.corner(
+            samples,
+            labels=param_names,
+            plot_datapoints=plot_datapoint,
+            title_quantiles=title_quantiles,
+            show_titles=show_titles,
+            title_fmt=title_fmt,
+            use_math_text=use_math_text,
+            **kwargs,
+        )
+        plt.savefig(path)
+        plt.close()
+
+    def plot_diagnostic(self, path: str = "diagnostic.jpeg", **kwargs):
+        """
+        plot diagnostic plot of the samples.
+        """
+        summary = self.jim.sampler.get_sampler_state(training=True)
+        chains, log_prob, local_accs, global_accs, loss_vals = summary.values()
+        log_prob = np.array(log_prob)
+
+        plt.figure(figsize=(10, 10))
+        axs = [plt.subplot(2, 2, i + 1) for i in range(4)]
+        plt.sca(axs[0])
+        plt.title("log probability")
+        plt.plot(log_prob.mean(0))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+
+        plt.sca(axs[1])
+        plt.title("NF loss")
+        plt.plot(loss_vals.reshape(-1))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+
+        plt.sca(axs[2])
+        plt.title("Local Acceptance")
+        plt.plot(local_accs.mean(0))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+
+        plt.sca(axs[3])
+        plt.title("Global Acceptance")
+        plt.plot(global_accs.mean(0))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+        plt.tight_layout()
+
+        plt.savefig(path)
+        plt.close()
+
+    def save_summary(self, path: str = "", **kwargs):
+        if path == "":
+            path = self.run.path + "run_manager_summary.txt"
+        orig_stdout = sys.stdout
+        sys.stdout = open(path, "wt")
+        self.jim.print_summary()
+        if self.run.injection:
+            for detector, SNR in zip(self.detectors, self.SNRs):
+                print("SNR of detector " + detector + " is " + str(SNR))
+            networkSNR = jnp.sum(jnp.array(self.SNRs) ** 2) ** (0.5)
+            print("network SNR is", networkSNR)
+        sys.stdout.close()
+        sys.stdout = orig_stdout

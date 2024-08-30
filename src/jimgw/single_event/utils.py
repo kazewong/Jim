@@ -393,6 +393,93 @@ def theta_phi_to_ra_dec(theta: Float, phi: Float, gmst: Float) -> tuple[Float, F
     return ra, dec
 
 
+def zenith_azimuth_to_ra_dec(
+    zenith: Float, azimuth: Float, gmst: Float, rotation: Float[Array, " 3 3"]
+) -> tuple[Float, Float]:
+    """
+    Transforming the azimuthal angle and zenith angle in Earth frame to right ascension and declination.
+
+    Parameters
+    ----------
+    zenith : Float
+            Zenith angle.
+    azimuth : Float
+            Azimuthal angle.
+    gmst : Float
+            Greenwich mean sidereal time.
+    rotation : Float[Array, " 3 3"]
+            The rotation matrix.
+
+    Copied and modified from bilby/gw/utils.py
+
+    Returns
+    -------
+    ra : Float
+            Right ascension.
+    dec : Float
+            Declination.
+    """
+    theta, phi = angle_rotation(zenith, azimuth, rotation)
+    ra, dec = theta_phi_to_ra_dec(theta, phi, gmst)
+    return ra, dec
+
+
+def ra_dec_to_theta_phi(ra: Float, dec: Float, gmst: Float) -> tuple[Float, Float]:
+    """
+    Transforming the right ascension ra and declination dec to the polar angle
+    theta and azimuthal angle phi.
+
+    Parameters
+    ----------
+    ra : Float
+            Right ascension.
+    dec : Float
+            Declination.
+    gmst : Float
+            Greenwich mean sidereal time.
+
+    Returns
+    -------
+    theta : Float
+            Polar angle.
+    phi : Float
+            Azimuthal angle.
+    """
+    phi = ra - gmst
+    theta = jnp.pi / 2 - dec
+    phi = (phi + 2 * jnp.pi) % (2 * jnp.pi)
+    return theta, phi
+
+
+def ra_dec_to_zenith_azimuth(
+    ra: Float, dec: Float, gmst: Float, rotation: Float[Array, " 3 3"]
+) -> tuple[Float, Float]:
+    """
+    Transforming the right ascension and declination to the zenith angle and azimuthal angle.
+
+    Parameters
+    ----------
+    ra : Float
+            Right ascension.
+    dec : Float
+            Declination.
+    gmst : Float
+            Greenwich mean sidereal time.
+    rotation : Float[Array, " 3 3"]
+            The rotation matrix.
+
+    Returns
+    -------
+    zenith : Float
+            Zenith angle.
+    azimuth : Float
+            Azimuthal angle.
+    """
+    theta, phi = ra_dec_to_theta_phi(ra, dec, gmst)
+    zenith, azimuth = angle_rotation(theta, phi, rotation)
+    return zenith, azimuth
+
+
 def spin_to_cartesian_spin(
     thetaJN: Float,
     phiJL: Float,
@@ -549,90 +636,3 @@ def spin_to_cartesian_spin(
     S1 = s1hat * chi1
     S2 = s2hat * chi2
     return iota, S1[0], S1[1], S1[2], S2[0], S2[1], S2[2]
-
-
-def zenith_azimuth_to_ra_dec(
-    zenith: Float, azimuth: Float, gmst: Float, rotation: Float[Array, " 3 3"]
-) -> tuple[Float, Float]:
-    """
-    Transforming the azimuthal angle and zenith angle in Earth frame to right ascension and declination.
-
-    Parameters
-    ----------
-    zenith : Float
-            Zenith angle.
-    azimuth : Float
-            Azimuthal angle.
-    gmst : Float
-            Greenwich mean sidereal time.
-    rotation : Float[Array, " 3 3"]
-            The rotation matrix.
-
-    Copied and modified from bilby/gw/utils.py
-
-    Returns
-    -------
-    ra : Float
-            Right ascension.
-    dec : Float
-            Declination.
-    """
-    theta, phi = angle_rotation(zenith, azimuth, rotation)
-    ra, dec = theta_phi_to_ra_dec(theta, phi, gmst)
-    return ra, dec
-
-
-def ra_dec_to_theta_phi(ra: Float, dec: Float, gmst: Float) -> tuple[Float, Float]:
-    """
-    Transforming the right ascension ra and declination dec to the polar angle
-    theta and azimuthal angle phi.
-
-    Parameters
-    ----------
-    ra : Float
-            Right ascension.
-    dec : Float
-            Declination.
-    gmst : Float
-            Greenwich mean sidereal time.
-
-    Returns
-    -------
-    theta : Float
-            Polar angle.
-    phi : Float
-            Azimuthal angle.
-    """
-    phi = ra - gmst
-    theta = jnp.pi / 2 - dec
-    phi = (phi + 2 * jnp.pi) % (2 * jnp.pi)
-    return theta, phi
-
-
-def ra_dec_to_zenith_azimuth(
-    ra: Float, dec: Float, gmst: Float, rotation: Float[Array, " 3 3"]
-) -> tuple[Float, Float]:
-    """
-    Transforming the right ascension and declination to the zenith angle and azimuthal angle.
-
-    Parameters
-    ----------
-    ra : Float
-            Right ascension.
-    dec : Float
-            Declination.
-    gmst : Float
-            Greenwich mean sidereal time.
-    rotation : Float[Array, " 3 3"]
-            The rotation matrix.
-
-    Returns
-    -------
-    zenith : Float
-            Zenith angle.
-    azimuth : Float
-            Azimuthal angle.
-    """
-    theta, phi = ra_dec_to_theta_phi(ra, dec, gmst)
-    zenith, azimuth = angle_rotation(theta, phi, rotation)
-    return zenith, azimuth
