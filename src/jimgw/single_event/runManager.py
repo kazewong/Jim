@@ -4,6 +4,8 @@ from typing import Union
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import corner
+import numpy as np
 import yaml
 from astropy.time import Time
 from jaxlib.xla_extension import ArrayImpl
@@ -71,7 +73,8 @@ class SingleEventRun:
         str, dict[str, Union[str, float, int, bool]]
     ]  # Transform cannot be included in this way, add it to preset if used often.
     jim_parameters: dict[str, Union[str, float, int, bool, dict]]
-    injection_parameters: dict[str, float]
+    path: str = "./experiment"
+    injection_parameters: dict[str, float] = field(default_factory=lambda: {})
     injection: bool = False
     likelihood_parameters: dict[str, Union[str, float, int, bool, PyTree]] = field(
         default_factory=lambda: {"name": "TransientLikelihoodFD"}
@@ -123,6 +126,9 @@ class SingleEventPERunManager(RunManager):
             print("Neither run instance nor path provided.")
             raise ValueError
 
+        if self.run.injection and not self.run.injection_parameters:
+            raise ValueError("Injection mode requires injection parameters.")
+
         local_prior = self.initialize_prior()
         local_likelihood = self.initialize_likelihood(local_prior)
         self.jim = Jim(local_likelihood, local_prior, **self.run.jim_parameters)
@@ -150,6 +156,7 @@ class SingleEventPERunManager(RunManager):
         waveform = self.initialize_waveform()
         name = self.run.likelihood_parameters["name"]
         assert isinstance(name, str), "Likelihood name must be a string."
+        assert name in likelihood_presets, f"Likelihood {name} not recognized."
         if self.run.injection:
             freqs = jnp.linspace(
                 self.run.data_parameters["f_min"],
@@ -351,3 +358,73 @@ class SingleEventPERunManager(RunManager):
         plt.ylabel("Amplitude")
         plt.legend()
         plt.savefig(path)
+
+    def sample(self):
+        self.jim.sample(jax.random.PRNGKey(self.run.seed))
+
+    def get_samples(self):
+        return self.jim.get_samples()
+
+    def plot_corner(self, path: str = "corner.jpeg", **kwargs):
+        """
+        plot corner plot of the samples.
+        """
+        plot_datapoint = kwargs.get("plot_datapoints", False)
+        title_quantiles = kwargs.get("title_quantiles", [0.16, 0.5, 0.84])
+        show_titles = kwargs.get("show_titles", True)
+        title_fmt = kwargs.get("title_fmt", ".2E")
+        use_math_text = kwargs.get("use_math_text", True)
+
+        samples = self.jim.get_samples()
+        param_names = list(samples.keys())
+        samples = np.array(list(samples.values())).reshape(int(len(param_names)), -1).T
+        corner.corner(
+            samples,
+            labels=param_names,
+            plot_datapoints=plot_datapoint,
+            title_quantiles=title_quantiles,
+            show_titles=show_titles,
+            title_fmt=title_fmt,
+            use_math_text=use_math_text,
+            **kwargs,
+        )
+        plt.savefig(path)
+        plt.close()
+
+    def plot_diagnostic(self, path: str = "diagnostic.jpeg", **kwargs):
+        """
+        plot diagnostic plot of the samples.
+        """
+        summary = self.jim.Sampler.get_sampler_state(training=True)
+        chains, log_prob, local_accs, global_accs, loss_vals = summary.values()
+        log_prob = np.array(log_prob)
+
+        plt.figure(figsize=(10, 10))
+        axs = [plt.subplot(2, 2, i + 1) for i in range(4)]
+        plt.sca(axs[0])
+        plt.title("log probability")
+        plt.plot(log_prob.mean(0))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+
+        plt.sca(axs[1])
+        plt.title("NF loss")
+        plt.plot(loss_vals.reshape(-1))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+
+        plt.sca(axs[2])
+        plt.title("Local Acceptance")
+        plt.plot(local_accs.mean(0))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+
+        plt.sca(axs[3])
+        plt.title("Global Acceptance")
+        plt.plot(global_accs.mean(0))
+        plt.xlabel("iteration")
+        plt.xlim(0, None)
+        plt.tight_layout()
+
+        plt.savefig(path)
+        plt.close()

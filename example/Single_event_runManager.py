@@ -28,21 +28,20 @@ bounds = jnp.array(
     ]
 )
 
-
 run = SingleEventRun(
     seed=0,
     detectors=["H1", "L1"],
     priors={
-        "M_c": {"name": "Uniform", "xmin": 10.0, "xmax": 80.0},
+        "M_c": {"name": "Unconstrained_Uniform", "xmin": 10.0, "xmax": 80.0},
         "q": {"name": "MassRatio"},
-        "s1_z": {"name": "Uniform", "xmin": -1.0, "xmax": 1.0},
-        "s2_z": {"name": "Uniform", "xmin": -1.0, "xmax": 1.0},
-        "d_L": {"name": "Uniform", "xmin": 0.0, "xmax": 2000.0},
-        "t_c": {"name": "Uniform", "xmin": -0.05, "xmax": 0.05},
-        "phase_c": {"name": "Uniform", "xmin": 0.0, "xmax": 2 * jnp.pi},
+        "s1_z": {"name": "Unconstrained_Uniform", "xmin": -1.0, "xmax": 1.0},
+        "s2_z": {"name": "Unconstrained_Uniform", "xmin": -1.0, "xmax": 1.0},
+        "d_L": {"name": "Unconstrained_Uniform", "xmin": 0.0, "xmax": 2000.0},
+        "t_c": {"name": "Unconstrained_Uniform", "xmin": -0.05, "xmax": 0.05},
+        "phase_c": {"name": "Unconstrained_Uniform", "xmin": 0.0, "xmax": 2 * jnp.pi},
         "cos_iota": {"name": "CosIota"},
-        "psi": {"name": "Uniform", "xmin": 0.0, "xmax": jnp.pi},
-        "ra": {"name": "Uniform", "xmin": 0.0, "xmax": 2 * jnp.pi},
+        "psi": {"name": "Unconstrained_Uniform", "xmin": 0.0, "xmax": jnp.pi},
+        "ra": {"name": "Unconstrained_Uniform", "xmin": 0.0, "xmax": 2 * jnp.pi},
         "sin_dec": {"name": "SinDec"},
     },
     waveform_parameters={"name": "RippleIMRPhenomD", "f_ref": 20.0},
@@ -90,3 +89,9 @@ run = SingleEventRun(
 )
 
 run_manager = SingleEventPERunManager(run=run)
+run_manager.jim.sample(jax.random.PRNGKey(42))
+
+# plot the corner plot and diagnostic plot
+run_manager.plot_corner()
+run_manager.plot_diagnostic()
+

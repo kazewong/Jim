@@ -89,8 +89,8 @@ sample_transforms = [
 ]
 
 likelihood_transforms = [
-    SpinToCartesianSpinTransform(name_mapping=[["theta_jn", "phi_jl", "theta_1", "theta_2", "phi_12", "a_1", "a_2"], ["iota", "s1_x", "s1_y", "s1_z", "s2_x", "s2_y", "s2_z"]], freq_ref=20.0),
-    MassRatioToSymmetricMassRatioTransform(name_mapping=[["q"], ["eta"]]),
+    SpinToCartesianSpinTransform(freq_ref=20.0),
+    MassRatioToSymmetricMassRatioTransform,
 ]
 
 likelihood = TransientLikelihoodFD(

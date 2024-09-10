@@ -89,7 +89,7 @@ class NtoNTransform(NtoMTransform):
         output_params = self.transform_func(transform_params)
         jacobian = jax.jacfwd(self.transform_func)(transform_params)
         jacobian = jnp.array(jax.tree.leaves(jacobian))
-        jacobian = jnp.log(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim)))
+        jacobian = jnp.log(jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim))))
         jax.tree.map(
             lambda key: x_copy.pop(key),
             self.name_mapping[0],
@@ -126,7 +126,7 @@ class BijectiveTransform(NtoNTransform):
         output_params = self.inverse_transform_func(transform_params)
         jacobian = jax.jacfwd(self.inverse_transform_func)(transform_params)
         jacobian = jnp.array(jax.tree.leaves(jacobian))
-        jacobian = jnp.log(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim)))
+        jacobian = jnp.log(jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim))))
         jax.tree.map(
             lambda key: y_copy.pop(key),
             self.name_mapping[1],
@@ -445,3 +445,19 @@ class ParetoTransform(BijectiveTransform):
             )
             for i in range(len(name_mapping[1]))
         }
+
+
+def reverse_bijective_transform(
+    original_transform: BijectiveTransform,
+) -> BijectiveTransform:
+
+    reversed_name_mapping = (
+        original_transform.name_mapping[1],
+        original_transform.name_mapping[0],
+    )
+    reversed_transform = BijectiveTransform(name_mapping=reversed_name_mapping)
+    reversed_transform.transform_func = original_transform.inverse_transform_func
+    reversed_transform.inverse_transform_func = original_transform.transform_func
+    reversed_transform.__repr__ = lambda: f"Reversed{repr(original_transform)}"
+
+    return reversed_transform
