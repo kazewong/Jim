@@ -32,11 +32,13 @@ for ifo in ifos:
     ifo.load_data(gps, start_pad, end_pad, fmin, fmax, psd_pad=16, tukey_alpha=0.2)
 
 M_c_min, M_c_max = 10.0, 80.0
-eta_min, eta_max = 0.2, 0.25
-# m_1_prior = UniformPrior(Mc_q_to_m1_m2(M_c_min, q_max)[0], Mc_q_to_m1_m2(M_c_max, q_min)[0], parameter_names=["m_1"])
-# m_2_prior = UniformPrior(Mc_q_to_m1_m2(M_c_min, q_min)[1], Mc_q_to_m1_m2(M_c_max, q_max)[1], parameter_names=["m_2"])
+q_min, q_max = 0.125, 1.0
+# eta_min, eta_max = 0.2, 0.25
+m_1_prior = UniformPrior(Mc_q_to_m1_m2(M_c_min, q_max)[0], Mc_q_to_m1_m2(M_c_max, q_min)[0], parameter_names=["m_1"])
+m_2_prior = UniformPrior(Mc_q_to_m1_m2(M_c_min, q_min)[1], Mc_q_to_m1_m2(M_c_max, q_max)[1], parameter_names=["m_2"])
 Mc_prior = UniformPrior(M_c_min, M_c_max, parameter_names=["M_c"])
-eta_prior = UniformPrior(eta_min, eta_max, parameter_names=["eta"])
+q_prior = UniformPrior(q_min, q_max, parameter_names=["q"])
+# eta_prior = UniformPrior(eta_min, eta_max, parameter_names=["eta"])
 s1z_prior = UniformPrior(-1.0, 1.0, parameter_names=["s1_z"])
 s2z_prior = UniformPrior(-1.0, 1.0, parameter_names=["s2_z"])
 dL_prior = PowerLawPrior(1.0, 2000.0, 2.0, parameter_names=["d_L"])
@@ -49,8 +51,11 @@ dec_prior = CosinePrior(parameter_names=["dec"])
 
 prior = CombinePrior(
     [
-        Mc_prior,
-        eta_prior,
+        m_1_prior,
+        m_2_prior,
+        # Mc_prior,
+        # q_prior,
+        # eta_prior,
         s1z_prior,
         s2z_prior,
         dL_prior,
@@ -64,9 +69,10 @@ prior = CombinePrior(
 )
 
 sample_transforms = [
-    # ComponentMassesToChirpMassMassRatioTransform,
+    ComponentMassesToChirpMassMassRatioTransform,
     BoundToUnbound(name_mapping = (["M_c"], ["M_c_unbounded"]), original_lower_bound=M_c_min, original_upper_bound=M_c_max),
-    BoundToUnbound(name_mapping = (["eta"], ["eta_unbounded"]), original_lower_bound=eta_min, original_upper_bound=eta_max),
+    BoundToUnbound(name_mapping = (["q"], ["q_unbounded"]), original_lower_bound=q_min, original_upper_bound=q_max),
+    # BoundToUnbound(name_mapping = (["eta"], ["eta_unbounded"]), original_lower_bound=eta_min, original_upper_bound=eta_max),
     BoundToUnbound(name_mapping = (["s1_z"], ["s1_z_unbounded"]) , original_lower_bound=-1.0, original_upper_bound=1.0),
     BoundToUnbound(name_mapping = (["s2_z"], ["s2_z_unbounded"]) , original_lower_bound=-1.0, original_upper_bound=1.0),
     BoundToUnbound(name_mapping = (["d_L"], ["d_L_unbounded"]) , original_lower_bound=1.0, original_upper_bound=2000.0),
@@ -80,7 +86,7 @@ sample_transforms = [
 ]
 
 likelihood_transforms = [
-    # ComponentMassesToChirpMassSymmetricMassRatioTransform,
+    ComponentMassesToChirpMassSymmetricMassRatioTransform,
 ]
 
 likelihood = TransientLikelihoodFD(
@@ -128,6 +134,6 @@ jim = Jim(
     verbose=True
 )
 
-jim.sample(jax.random.PRNGKey(42))
+# jim.sample(jax.random.PRNGKey(42))
 # jim.get_samples()
 # jim.print_summary()
