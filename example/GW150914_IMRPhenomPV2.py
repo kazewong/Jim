@@ -4,7 +4,6 @@ import jax
 import jax.numpy as jnp
 
 from jimgw.jim import Jim
-from jimgw.jim import Jim
 from jimgw.prior import (
     CombinePrior,
     UniformPrior,
