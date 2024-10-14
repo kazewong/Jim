@@ -15,7 +15,7 @@ from jimgw import prior
 from jimgw.base import RunManager
 from jimgw.jim import Jim
 from jimgw.single_event.detector import Detector, detector_preset
-from jimgw.single_event.likelihood import SingleEventLiklihood, likelihood_presets
+from jimgw.single_event.likelihood import SingleEventLikelihood, likelihood_presets
 from jimgw.single_event.waveform import Waveform, waveform_preset
 
 
@@ -145,7 +145,7 @@ class SingleEventPERunManager(RunManager):
 
     ### Initialization functions ###
 
-    def initialize_likelihood(self, prior: prior.Prior) -> SingleEventLiklihood:
+    def initialize_likelihood(self, prior: prior.Prior) -> SingleEventLikelihood:
         """
         Since prior contains information about types, naming and ranges of parameters,
         some of the likelihood class require the prior to be initialized, such as the
