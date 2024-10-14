@@ -17,7 +17,7 @@ from jimgw.single_event.waveform import Waveform
 from jimgw.transforms import BijectiveTransform, NtoMTransform
 
 
-class SingleEventLiklihood(LikelihoodBase):
+class SingleEventLikelihood(LikelihoodBase):
     detectors: list[Detector]
     waveform: Waveform
 
@@ -35,7 +35,7 @@ class ZeroLikelihood(LikelihoodBase):
         return 0.0
 
 
-class TransientLikelihoodFD(SingleEventLiklihood):
+class TransientLikelihoodFD(SingleEventLikelihood):
     def __init__(
         self,
         detectors: list[Detector],
