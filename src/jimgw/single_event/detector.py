@@ -12,6 +12,7 @@ from scipy.signal.windows import tukey
 
 from jimgw.constants import C_SI, EARTH_SEMI_MAJOR_AXIS, EARTH_SEMI_MINOR_AXIS
 from jimgw.single_event.wave import Polarization
+import logging
 
 DEG_TO_RAD = jnp.pi / 180
 
@@ -21,6 +22,8 @@ asd_file_dict = {
     "L1": "https://dcc.ligo.org/public/0169/P2000251/001/O3-L1-C01_CLEAN_SUB60HZ-1240573680.0_sensitivity_strain_asd.txt",
     "V1": "https://dcc.ligo.org/public/0169/P2000251/001/O3-V1_sensitivity_strain_asd.txt",
 }
+
+_DEF_GWPY_KWARGS = {"cache": True}
 
 
 class Detector(ABC):
@@ -62,10 +65,44 @@ class Detector(ABC):
 
 
 class GroundBased2G(Detector):
+    """Object representing a ground-based detector. Contains information
+    about the location and orientation of the detector on Earth, as well as
+    actual strain data and the PSD of the associated noise.
+
+    Attributes
+    ----------
+    name : str
+        Name of the detector.
+    latitude : Float
+        Latitude of the detector in radians.
+    longitude : Float
+        Longitude of the detector in radians.
+    xarm_azimuth : Float
+        Azimuth of the x-arm in radians.
+    yarm_azimuth : Float
+        Azimuth of the y-arm in radians.
+    xarm_tilt : Float
+        Tilt of the x-arm in radians.
+    yarm_tilt : Float
+        Tilt of the y-arm in radians.
+    elevation : Float
+        Elevation of the detector in meters.
+    polarization_mode : list[Polarization]
+        List of polarization modes (`pc` for plus and cross) to be used in
+        computing antenna patterns; in the future, this could be expanded to
+        include non-GR modes.
+    frequencies : Float[Array, " n_sample"]
+        Array of Fourier frequencies.
+    data : Float[Array, " n_sample"]
+        Array of Fourier-domain strain data.
+    psd : Float[Array, " n_sample"]
+        Array of noise power spectral density.
+    """
     polarization_mode: list[Polarization]
     frequencies: Float[Array, " n_sample"]
     data: Float[Array, " n_sample"]
     psd: Float[Array, " n_sample"]
+    epoch: Float = 0
 
     latitude: Float = 0
     longitude: Float = 0
@@ -99,8 +136,7 @@ class GroundBased2G(Detector):
     def _get_arm(
         lat: Float, lon: Float, tilt: Float, azimuth: Float
     ) -> Float[Array, " 3"]:
-        """
-        Construct detector-arm vectors in Earth-centric Cartesian coordinates.
+        """Construct detector-arm vectors in geocentric Cartesian coordinates.
 
         Parameters
         ---------
@@ -116,7 +152,7 @@ class GroundBased2G(Detector):
         Returns
         -------
         arm : Float[Array, " 3"]
-            detector arm vector in Earth-centric Cartesian coordinates.
+            detector arm vector in geocentric Cartesian coordinates.
         """
         e_lon = jnp.array([-jnp.sin(lon), jnp.cos(lon), 0])
         e_lat = jnp.array(
@@ -134,8 +170,7 @@ class GroundBased2G(Detector):
 
     @property
     def arms(self) -> tuple[Float[Array, " 3"], Float[Array, " 3"]]:
-        """
-        Detector arm vectors (x, y).
+        """Detector arm vectors (x, y).
 
         Returns
         -------
@@ -154,8 +189,15 @@ class GroundBased2G(Detector):
 
     @property
     def tensor(self) -> Float[Array, " 3 3"]:
-        """
-        Detector tensor defining the strain measurement.
+        """Detector tensor defining the strain measurement.
+
+        For a 2-arm differential-length detector, this is given by:
+
+        .. math::
+
+            D_{ij} = \\left(x_i x_j - y_i y_j\\right)/2
+
+        for unit vectors :math:`x` and :math:`y` along the x and y arms.
 
         Returns
         -------
@@ -170,8 +212,7 @@ class GroundBased2G(Detector):
 
     @property
     def vertex(self) -> Float[Array, " 3"]:
-        """
-        Detector vertex coordinates in the reference celestial frame. Based
+        """Detector vertex coordinates in the reference celestial frame. Based
         on arXiv:gr-qc/0008066 Eqs. (B11-B13) except for a typo in the
         definition of the local radius; see Section 2.1 of LIGO-T980044-10.
 
@@ -203,10 +244,11 @@ class GroundBased2G(Detector):
         f_max: Float,
         psd_pad: int = 16,
         tukey_alpha: Float = 0.2,
-        gwpy_kwargs: dict = {"cache": True},
+        gwpy_kwargs: dict | None = None,
     ) -> None:
-        """
-        Load data from the detector.
+        """Load open GW detector data from GWOSC using GWpy. Essentially, this
+        is a wrapper around the GWpy :meth:`TimeSeries.fetch_open_data`
+        method.
 
         Parameters
         ----------
@@ -220,14 +262,22 @@ class GroundBased2G(Detector):
             The minimum frequency to fetch data.
         f_max : Float
             The maximum frequency to fetch data.
-        psd_pad : int
-            The amount of time to pad the PSD data.
         tukey_alpha : Float
-            The alpha parameter for the Tukey window.
-
+            The ``alpha`` parameter for the Tukey window; this represents
+            the fraction of the segment duration that is tapered on each end
+            (defaults to 0.2).
+        gwpy_kwargs : dict, optional
+            Additional keyword arguments to pass to the GWpy
+            :meth:`TimeSeries.fetch_open_data` method, defaults to
+            {}.
         """
+        if gwpy_kwargs is None:
+            gwpy_kwargs = _DEF_GWPY_KWARGS
 
-        print("Fetching data from {}...".format(self.name))
+        duration = gps_end_pad + gps_start_pad
+        logging.info(f"Fetching {duration} s of {self.name} data around "
+                     f"{trigger_time} from GWOSC.")
+        
         data_td = TimeSeries.fetch_open_data(
             self.name,
             trigger_time - gps_start_pad,
@@ -260,6 +310,22 @@ class GroundBased2G(Detector):
         self.frequencies = freq[(freq > f_min) & (freq < f_max)]
         self.data = data[(freq > f_min) & (freq < f_max)]
         self.psd = psd[(freq > f_min) & (freq < f_max)]
+    load_data.__doc__ = load_data.__doc__.format(_DEF_GWPY_KWARGS)
+
+    def compute_psd(self,
+                    data: Float[Array, " n_sample"] | None,
+                    pad: Float = 0.,
+                    **kws) -> None:
+        # if data is None:
+        #     if pad:
+        #         # pull more data to compute a PSD
+                
+        # n = len(data)
+        # delta_t = 1.0
+        # data = jnp.fft.rfft(data * tukey(n, tukey_alpha)) * delta_t
+        # freq = jnp.fft.rfftfreq(n, delta_t)
+        # return jnp.abs(data) ** 2 / delta_t
+        raise NotImplementedError
 
     def fd_response(
         self,
