@@ -1,3 +1,5 @@
+__include__ = ["Data", "PowerSpectrum"]
+
 from abc import ABC, abstractmethod
 
 import jax
@@ -24,8 +26,6 @@ asd_file_dict = {
     "L1": "https://dcc.ligo.org/public/0169/P2000251/001/O3-L1-C01_CLEAN_SUB60HZ-1240573680.0_sensitivity_strain_asd.txt",
     "V1": "https://dcc.ligo.org/public/0169/P2000251/001/O3-V1_sensitivity_strain_asd.txt",
 }
-
-_DEF_GWPY_KWARGS = {"cache": True}
 
 
 class Data(ABC):
@@ -82,10 +82,10 @@ class Data(ABC):
         """Whether the Fourier domain data has been computed."""
         return bool(np.any(self.fd))
 
-    def __init__(self, td: Float[Array, " n_time"],
-                 delta_t: float,
+    def __init__(self, td: Float[Array, " n_time"] = jnp.array([]),
+                 delta_t: float = 0.,
                  epoch: float = 0.,
-                 name: Optional[str] = None,
+                 name: str = '',
                  window: Optional[Float[Array, " n_time"]] = None)\
             -> None:
         """Initialize the data class.
@@ -112,6 +112,13 @@ class Data(ABC):
         else:
             self.window = window
         self.name = name or ''
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(name='{self.name}', delta_t={self.delta_t}, epoch={self.epoch})"
+
+    def __bool__(self) -> bool:
+        """Check if the data is empty."""
+        return len(self.td) > 0
 
     def set_tukey_window(self, alpha: float = 0.2) -> None:
         """Create a Tukey window on the data; the window is stored in the
@@ -201,7 +208,6 @@ class Data(ABC):
             Whether to cache the data (default: True)
         **kws: dict, optional
             Keyword arguments for `gwpy.timeseries.TimeSeries.fetch_open_data`
-            defaults to {}
         """
         duration = gps_end_time - gps_start_time
         logging.info(f"Fetching {duration} s of {ifo} data from GWOSC "
@@ -210,9 +216,6 @@ class Data(ABC):
         data_td = TimeSeries.fetch_open_data(ifo, gps_start_time, gps_end_time,
                                              cache=cache, **kws)
         return cls(data_td.value, data_td.dt.value, data_td.epoch.value, ifo)
-
-    from_gwosc.__doc__ = from_gwosc.__doc__.format(_DEF_GWPY_KWARGS)
-
 
 class PowerSpectrum(ABC):
     name: str
@@ -234,12 +237,22 @@ class PowerSpectrum(ABC):
         """Duration of the data in seconds."""
         return 1 / self.delta_f
 
-    def __init__(self, values: Float[Array, " n_freq"],
-                 frequencies: Float[Array, " n_freq"],
+    @property
+    def sampling_frequency(self) -> Float:
+        """Sampling frequency of the data in Hz."""
+        return self.frequencies[-1] * 2 
+
+    def __init__(self, values: Float[Array, " n_freq"] = jnp.array([]),
+                 frequencies: Float[Array, " n_freq"] = jnp.array([]),
                  name: Optional[str] = None) -> None:
         self.values = values
         self.frequencies = frequencies
+        assert len(self.values) == len(self.frequencies), \
+            "Values and frequencies must have the same length"
         self.name = name or ''
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(name='{self.name}', frequencies={self.frequencies})"
 
     def slice(self, f_min: float, f_max: float) -> \
         tuple[Float[Array, " n_sample"], Float[Array, " n_sample"]]:

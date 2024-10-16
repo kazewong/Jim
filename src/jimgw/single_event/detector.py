@@ -9,6 +9,7 @@ from jaxtyping import Array, Float, PRNGKeyArray, jaxtyped
 from beartype import beartype as typechecker
 from scipy.interpolate import interp1d
 from scipy.signal.windows import tukey
+from . import data as jd
 
 from jimgw.constants import C_SI, EARTH_SEMI_MAJOR_AXIS, EARTH_SEMI_MINOR_AXIS
 from jimgw.single_event.wave import Polarization
@@ -99,10 +100,8 @@ class GroundBased2G(Detector):
         Array of noise power spectral density.
     """
     polarization_mode: list[Polarization]
-    frequencies: Float[Array, " n_sample"]
-    data: Float[Array, " n_sample"]
-    psd: Float[Array, " n_sample"]
-    epoch: Float = 0
+    data: jd.Data
+    psd: jd.PowerSpectrum
 
     latitude: Float = 0
     longitude: Float = 0
@@ -115,22 +114,26 @@ class GroundBased2G(Detector):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.name})"
 
-    def __init__(self, name: str, **kwargs) -> None:
+    def __init__(self, name: str, latitude: float = 0, longitude: float = 0,
+                 elevation: float = 0, xarm_azimuth: float = 0, 
+                 yarm_azimuth: float = 0, xarm_tilt: float = 0, 
+                 yarm_tilt: float = 0, modes: str = "pc"):
         self.name = name
 
-        self.latitude = kwargs.get("latitude", 0)
-        self.longitude = kwargs.get("longitude", 0)
-        self.elevation = kwargs.get("elevation", 0)
-        self.xarm_azimuth = kwargs.get("xarm_azimuth", 0)
-        self.yarm_azimuth = kwargs.get("yarm_azimuth", 0)
-        self.xarm_tilt = kwargs.get("xarm_tilt", 0)
-        self.yarm_tilt = kwargs.get("yarm_tilt", 0)
-        modes = kwargs.get("mode", "pc")
+        self.latitude = latitude
+        self.longitude = longitude
+        self.elevation = elevation
+        self.xarm_azimuth = xarm_azimuth
+        self.yarm_azimuth = yarm_azimuth
+        self.xarm_tilt = xarm_tilt
+        self.yarm_tilt = yarm_tilt
 
         self.polarization_mode = [Polarization(m) for m in modes]
-        self.frequencies = jnp.array([])
-        self.data = jnp.array([])
-        self.psd = jnp.array([])
+        self.data = jd.Data()
+        
+        # self.frequencies = jnp.array([])
+        # self.data = jnp.array([])
+        # self.psd = jnp.array([])
 
     @staticmethod
     def _get_arm(
@@ -311,6 +314,8 @@ class GroundBased2G(Detector):
         self.data = data[(freq > f_min) & (freq < f_max)]
         self.psd = psd[(freq > f_min) & (freq < f_max)]
     load_data.__doc__ = load_data.__doc__.format(_DEF_GWPY_KWARGS)
+
+    # def load_data(self, data: )
 
     def fd_response(
         self,
@@ -494,7 +499,7 @@ H1 = GroundBased2G(
     xarm_tilt=-6.195e-4,
     yarm_tilt=1.25e-5,
     elevation=142.554,
-    mode="pc",
+    modes="pc",
 )
 
 L1 = GroundBased2G(
@@ -506,7 +511,7 @@ L1 = GroundBased2G(
     xarm_tilt=0,
     yarm_tilt=0,
     elevation=-6.574,
-    mode="pc",
+    modes="pc",
 )
 
 V1 = GroundBased2G(
@@ -518,7 +523,7 @@ V1 = GroundBased2G(
     xarm_tilt=0,
     yarm_tilt=0,
     elevation=51.884,
-    mode="pc",
+    modes="pc",
 )
 
 detector_preset = {
