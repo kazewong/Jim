@@ -9,6 +9,7 @@ from jaxtyping import Array, Float, PRNGKeyArray, jaxtyped, Complex
 from typing import Optional, Any
 from beartype import beartype as typechecker
 from scipy.interpolate import interp1d
+import scipy.signal as sig
 from scipy.signal.windows import tukey
 
 from jimgw.constants import C_SI, EARTH_SEMI_MAJOR_AXIS, EARTH_SEMI_MINOR_AXIS
@@ -176,23 +177,28 @@ class Data(ABC):
         """
         if not self.has_fd:
             self.fft()
-        psd = jnp.abs(self.fd)**2 / self.duration
-        return PowerSpectrum(psd, self.frequencies, self.name)
+        freq, psd = sig.welch(self.td, fs=self.sampling_frequency, **kws)
+        return PowerSpectrum(jnp.array(psd), freq, self.name)
 
     @classmethod
     def from_gwosc(cls,
                    ifo: str,
                    gps_start_time: Float,
                    gps_end_time: Float,
+                   cache: bool = True,
                    **kws) -> "Data":
         """Pull data from GWOSC.
 
         Arguments
         ---------
+        ifo: str
+            Interferometer name
         gps_start_time: float
             GPS start time of the data
         gps_end_time: float
             GPS end time of the data
+        cache: bool, optional
+            Whether to cache the data (default: True)
         **kws: dict, optional
             Keyword arguments for `gwpy.timeseries.TimeSeries.fetch_open_data`
             defaults to {}
@@ -201,9 +207,8 @@ class Data(ABC):
         logging.info(f"Fetching {duration} s of {ifo} data from GWOSC "
                      f"[{gps_start_time}, {gps_end_time}]")
 
-        kws.update(_DEF_GWPY_KWARGS)
         data_td = TimeSeries.fetch_open_data(ifo, gps_start_time, gps_end_time,
-                                             **kws)
+                                             cache=cache, **kws)
         return cls(data_td.value, data_td.dt.value, data_td.epoch.value, ifo)
 
     from_gwosc.__doc__ = from_gwosc.__doc__.format(_DEF_GWPY_KWARGS)
