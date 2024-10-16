@@ -28,48 +28,66 @@ _DEF_GWPY_KWARGS = {"cache": True}
 
 class Data(ABC):
     """
-    Base class for all data.
+    Base class for all data. The time domain data are considered the primary
+    entitiy; the Fourier domain data are derived from an FFT after applying a
+    window. The structure is set up so that :attr:`td` and :attr:`fd` are always
+    Fourier conjugates of each other: the one-sided Fourier series is complete
+    up to the Nyquist frequency
 
     """
-
     name: str
 
-    fd: Float[Array, " n_sample"]
-    td: Float[Array, " n_sample//2"]  # fix this
-    psd: Float[Array, " n_sample//2"]  # fix this
-    frequencies: Float[Array, " n_sample//2"]
-    times: Float[Array, " n_sample"]
+    td: Float[Array, " n_time"]
+    fd: Float[Array, " n_time // 2 + 1"]
+
+    epoch: float
+    delta_t: float
+
+    window: Float[Array, " n_time"]
 
     @property
     def duration(self) -> Float:
         """Duration of the data in seconds."""
-        if len(self.frequencies) == 0:
-            return 0
-        return 1 / (self.frequencies[1] - self.frequencies[0])
-    
+        return self.n_time * self.delta_t
+
     @property
-    def delta_t(self) -> Float:
-        """Sampling interval of the data in seconds."""
-        return self.times[1] - self.times[0]
-    
-    def 
+    def n_time(self) -> int:
+        """Number of time samples."""
+        return len(self.td)
 
-    def load_psd_from_data(self, data: TimeSeries, **kws) -> None:
-        seglen = self.duration
-        self.psd = data.psd(fftlength=seglen).value
+    @property
+    def n_freq(self) -> int:
+        """Number of frequency samples."""
+        return self.n_time // 2 + 1
 
-    def compute_psd_from_gwosc(self,
-                    start_time: Float | None = None,
-                    end_time: Float | None = None,
-                    off_source: bool = True,
-                    **kws) -> None:
-        if data is None:
-            if pad:
-                # pull more data to compute a PSD
-                
-        # n = len(data)
-        # delta_t = 1.0
-        # data = jnp.fft.rfft(data * tukey(n, tukey_alpha)) * delta_t
-        # freq = jnp.fft.rfftfreq(n, delta_t)
-        # return jnp.abs(data) ** 2 / delta_t
-        raise NotImplementedError
+    @property
+    def times(self) -> Float[Array, " n_time"]:
+        """Times of the data in seconds."""
+        return jnp.arange(self.n_time) * self.delta_t + self.epoch
+
+    @property
+    def frequencies(self) -> Float[Array, " n_time // 2 + 1"]:
+        """Frequencies of the data in Hz."""
+        return jnp.fft.rfftfreq(self.n_time, self.delta_t)
+
+    def __init__(self, td: Float[Array, " n_time"],
+                 delta_t: float = 1.,
+                 epoch: float = 0.,
+                 **kws) -> None:
+        self.td = td
+        self.delta_t = delta_t
+        self.epoch = epoch
+        self.window = kws.get("window", jnp.ones_like(self.td))
+
+    def set_tukey_window(self, alpha: float = 0.4):
+        self.window = jnp.array(tukey(self.n_time, alpha))
+
+    def fft(self, **kws) -> None:
+        if "window" in kws:
+            self.window = kws["window"]
+        self.fd = jnp.fft.rfft(self.td * self.window) * self.delta_t
+
+    def frequency_slice(self, f_min: float, f_max: float) -> \
+            Float[Array, " n_sample"]:
+        f = self.frequencies
+        return self.fd[(f >= f_min) & (f <= f_max)]
