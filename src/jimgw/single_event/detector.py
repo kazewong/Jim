@@ -312,21 +312,6 @@ class GroundBased2G(Detector):
         self.psd = psd[(freq > f_min) & (freq < f_max)]
     load_data.__doc__ = load_data.__doc__.format(_DEF_GWPY_KWARGS)
 
-    def compute_psd(self,
-                    data: Float[Array, " n_sample"] | None,
-                    pad: Float = 0.,
-                    **kws) -> None:
-        # if data is None:
-        #     if pad:
-        #         # pull more data to compute a PSD
-                
-        # n = len(data)
-        # delta_t = 1.0
-        # data = jnp.fft.rfft(data * tukey(n, tukey_alpha)) * delta_t
-        # freq = jnp.fft.rfftfreq(n, delta_t)
-        # return jnp.abs(data) ** 2 / delta_t
-        raise NotImplementedError
-
     def fd_response(
         self,
         frequency: Float[Array, " n_sample"],

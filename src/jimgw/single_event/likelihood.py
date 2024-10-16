@@ -43,6 +43,8 @@ class TransientLikelihoodFD(SingleEventLikelihood):
         trigger_time: float = 0,
         duration: float = 4,
         post_trigger_duration: float = 2,
+        # TODO: apply f_min and f_max and get frequency domain data
+        # here
         **kwargs,
     ) -> None:
         self.detectors = detectors
