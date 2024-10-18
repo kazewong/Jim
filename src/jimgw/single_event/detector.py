@@ -10,6 +10,7 @@ from beartype import beartype as typechecker
 from scipy.interpolate import interp1d
 from scipy.signal.windows import tukey
 from . import data as jd
+from typing import Optional
 
 from jimgw.constants import C_SI, EARTH_SEMI_MAJOR_AXIS, EARTH_SEMI_MINOR_AXIS
 from jimgw.single_event.wave import Polarization
@@ -28,15 +29,17 @@ _DEF_GWPY_KWARGS = {"cache": True}
 
 
 class Detector(ABC):
-    """
-    Base class for all detectors.
-
+    """Base class for all detectors.
     """
 
     name: str
 
-    data: Float[Array, " n_sample"]
-    psd: Float[Array, " n_sample"]
+    # NOTE: for some detectors (e.g. LISA, ET) data could be a list of Data
+    # objects so this might be worth revisiting
+    data: jd.Data
+    psd: jd.PowerSpectrum
+
+    frequency_bounds: tuple[float, float] = (0., float("inf"))
 
     @abstractmethod
     def fd_response(
@@ -46,9 +49,9 @@ class Detector(ABC):
         params: dict,
         **kwargs,
     ) -> Float[Array, " n_sample"]:
+        """Modulate the waveform in the sky frame by the detector response
+        in the frequency domain.
         """
-        Modulate the waveform in the sky frame by the detector response
-        in the frequency domain."""
         pass
 
     @abstractmethod
@@ -59,10 +62,36 @@ class Detector(ABC):
         params: dict,
         **kwargs,
     ) -> Float[Array, " n_sample"]:
+        """Modulate the waveform in the sky frame by the detector response
+        in the time domain.
         """
-        Modulate the waveform in the sky frame by the detector response
-        in the time domain."""
         pass
+
+    def set_frequency_bounds(self, f_min: Optional[float] = None,
+                             f_max: Optional[float] = None) -> None:
+        """Set the frequency bounds for the detector.
+
+        Parameters
+        ----------
+        f_min : float
+            Minimum frequency.
+        f_max : float
+            Maximum frequency.
+        """
+        bounds = list(self.frequency_bounds)
+        if f_min is not None:
+            bounds[0] = f_min
+        if f_max is not None:
+            bounds[1] = f_max
+        self.frequency_bounds = tuple(bounds)  # type: ignore
+
+    @property
+    def fd_data_slice(self):
+        return self.data.frequency_slice(*self.frequency_bounds)
+
+    @property
+    def psd_slice(self):
+        return self.psd.frequency_slice(*self.frequency_bounds)
 
 
 class GroundBased2G(Detector):
@@ -115,8 +144,8 @@ class GroundBased2G(Detector):
         return f"{self.__class__.__name__}({self.name})"
 
     def __init__(self, name: str, latitude: float = 0, longitude: float = 0,
-                 elevation: float = 0, xarm_azimuth: float = 0, 
-                 yarm_azimuth: float = 0, xarm_tilt: float = 0, 
+                 elevation: float = 0, xarm_azimuth: float = 0,
+                 yarm_azimuth: float = 0, xarm_tilt: float = 0,
                  yarm_tilt: float = 0, modes: str = "pc"):
         self.name = name
 
@@ -130,10 +159,7 @@ class GroundBased2G(Detector):
 
         self.polarization_mode = [Polarization(m) for m in modes]
         self.data = jd.Data()
-        
-        # self.frequencies = jnp.array([])
-        # self.data = jnp.array([])
-        # self.psd = jnp.array([])
+        self.psd = jd.PowerSpectrum()
 
     @staticmethod
     def _get_arm(
@@ -159,10 +185,12 @@ class GroundBased2G(Detector):
         """
         e_lon = jnp.array([-jnp.sin(lon), jnp.cos(lon), 0])
         e_lat = jnp.array(
-            [-jnp.sin(lat) * jnp.cos(lon), -jnp.sin(lat) * jnp.sin(lon), jnp.cos(lat)]
+            [-jnp.sin(lat) * jnp.cos(lon), -jnp.sin(lat)
+             * jnp.sin(lon), jnp.cos(lat)]
         )
         e_h = jnp.array(
-            [jnp.cos(lat) * jnp.cos(lon), jnp.cos(lat) * jnp.sin(lon), jnp.sin(lat)]
+            [jnp.cos(lat) * jnp.cos(lon), jnp.cos(lat)
+             * jnp.sin(lon), jnp.sin(lat)]
         )
 
         return (
@@ -209,9 +237,8 @@ class GroundBased2G(Detector):
         """
         # TODO: this could easily be generalized for other detector geometries
         arm1, arm2 = self.arms
-        return 0.5 * (
-            jnp.einsum("i,j->ij", arm1, arm1) - jnp.einsum("i,j->ij", arm2, arm2)
-        )
+        return 0.5 * jnp.einsum("i,j->ij", arm1, arm1) - \
+            jnp.einsum("i,j->ij", arm2, arm2)
 
     @property
     def vertex(self) -> Float[Array, " 3"]:
@@ -237,85 +264,6 @@ class GroundBased2G(Detector):
         y = (r + h) * jnp.cos(lat) * jnp.sin(lon)
         z = ((minor / major) ** 2 * r + h) * jnp.sin(lat)
         return jnp.array([x, y, z])
-
-    def load_data(
-        self,
-        trigger_time: Float,
-        gps_start_pad: int,
-        gps_end_pad: int,
-        f_min: Float,
-        f_max: Float,
-        psd_pad: int = 16,
-        tukey_alpha: Float = 0.2,
-        gwpy_kwargs: dict | None = None,
-    ) -> None:
-        """Load open GW detector data from GWOSC using GWpy. Essentially, this
-        is a wrapper around the GWpy :meth:`TimeSeries.fetch_open_data`
-        method.
-
-        Parameters
-        ----------
-        trigger_time : Float
-            The GPS time of the trigger.
-        gps_start_pad : int
-            The amount of time before the trigger to fetch data.
-        gps_end_pad : int
-            The amount of time after the trigger to fetch data.
-        f_min : Float
-            The minimum frequency to fetch data.
-        f_max : Float
-            The maximum frequency to fetch data.
-        tukey_alpha : Float
-            The ``alpha`` parameter for the Tukey window; this represents
-            the fraction of the segment duration that is tapered on each end
-            (defaults to 0.2).
-        gwpy_kwargs : dict, optional
-            Additional keyword arguments to pass to the GWpy
-            :meth:`TimeSeries.fetch_open_data` method, defaults to
-            {}.
-        """
-        if gwpy_kwargs is None:
-            gwpy_kwargs = _DEF_GWPY_KWARGS
-
-        duration = gps_end_pad + gps_start_pad
-        logging.info(f"Fetching {duration} s of {self.name} data around "
-                     f"{trigger_time} from GWOSC.")
-        
-        data_td = TimeSeries.fetch_open_data(
-            self.name,
-            trigger_time - gps_start_pad,
-            trigger_time + gps_end_pad,
-            **gwpy_kwargs,
-        )
-        assert isinstance(data_td, TimeSeries), "Data is not a TimeSeries object."
-        segment_length = data_td.duration.value
-        n = len(data_td)
-        delta_t = data_td.dt.value  # type: ignore
-        data = jnp.fft.rfft(jnp.array(data_td.value) * tukey(n, tukey_alpha)) * delta_t
-        freq = jnp.fft.rfftfreq(n, delta_t)
-        # TODO: Check if this is the right way to fetch PSD
-        start_psd = int(trigger_time) - gps_start_pad - 2 * psd_pad
-        end_psd = int(trigger_time) - gps_start_pad - psd_pad
-
-        print("Fetching PSD data...")
-        psd_data_td = TimeSeries.fetch_open_data(
-            self.name, start_psd, end_psd, **gwpy_kwargs
-        )
-        assert isinstance(
-            psd_data_td, TimeSeries
-        ), "PSD data is not a TimeSeries object."
-        psd = psd_data_td.psd(
-            fftlength=segment_length
-        ).value  # TODO: Check whether this is sright.
-
-        print("Finished loading data.")
-
-        self.frequencies = freq[(freq > f_min) & (freq < f_max)]
-        self.data = data[(freq > f_min) & (freq < f_max)]
-        self.psd = psd[(freq > f_min) & (freq < f_max)]
-    load_data.__doc__ = load_data.__doc__.format(_DEF_GWPY_KWARGS)
-
-    # def load_data(self, data: )
 
     def fd_response(
         self,
@@ -422,55 +370,6 @@ class GroundBased2G(Detector):
 
         return antenna_patterns
 
-    def inject_signal(
-        self,
-        key: PRNGKeyArray,
-        freqs: Float[Array, " n_sample"],
-        h_sky: dict[str, Float[Array, " n_sample"]],
-        params: dict[str, Float],
-        psd_file: str = "",
-    ) -> None:
-        """
-        Inject a signal into the detector data.
-
-        Parameters
-        ----------
-        key : PRNGKeyArray
-            JAX PRNG key.
-        freqs : Float[Array, " n_sample"]
-            Array of frequencies.
-        h_sky : dict[str, Float[Array, " n_sample"]]
-            Array of waveforms in the sky frame. The key is the polarization mode.
-        params : dict[str, Float]
-            Dictionary of parameters.
-        psd_file : str
-            Path to the PSD file.
-
-        Returns
-        -------
-        None
-        """
-        self.frequencies = freqs
-        self.psd = self.load_psd(freqs, psd_file)
-        key, subkey = jax.random.split(key, 2)
-        var = self.psd / (4 * (freqs[1] - freqs[0]))
-        noise_real = jax.random.normal(key, shape=freqs.shape) * jnp.sqrt(var / 2.0)
-        noise_imag = jax.random.normal(subkey, shape=freqs.shape) * jnp.sqrt(var / 2.0)
-        align_time = jnp.exp(
-            -1j * 2 * jnp.pi * freqs * (params["epoch"] + params["t_c"])
-        )
-
-        signal = self.fd_response(freqs, h_sky, params) * align_time
-        self.data = signal + noise_real + 1j * noise_imag
-
-        # also calculate the optimal SNR and match filter SNR
-        optimal_SNR = jnp.sqrt(jnp.sum(signal * signal.conj() / var).real)
-        match_filter_SNR = jnp.sum(self.data * signal.conj() / var) / optimal_SNR
-
-        print(f"For detector {self.name}:")
-        print(f"The injected optimal SNR is {optimal_SNR}")
-        print(f"The injected match filter SNR is {match_filter_SNR}")
-
     @jaxtyped(typechecker=typechecker)
     def load_psd(
         self, freqs: Float[Array, " n_sample"], psd_file: str = ""
@@ -485,9 +384,44 @@ class GroundBased2G(Detector):
         else:
             f, psd_vals = np.loadtxt(psd_file, unpack=True)
 
-        psd = interp1d(f, psd_vals, fill_value=(psd_vals[0], psd_vals[-1]))(freqs)  # type: ignore
+        psd = interp1d(f, psd_vals, fill_value=(
+            psd_vals[0], psd_vals[-1]))(freqs)  # type: ignore
         psd = jnp.array(psd)
         return psd
+
+    def set_data(self, data: jd.Data | Array, **kws) -> None:
+        """Add data to detector.
+
+        Arguments
+        ---------
+        data : jd.Data | Array
+            Data to be added to the detector, either as a `jd.Data` object
+            or as a timeseries array.
+        kws : dict
+            Additional keyword arguments to pass to `jd.Data` constructor.
+        """
+        if isinstance(data, jd.Data):
+            self.data = data
+        else:
+            self.data = jd.Data(data, **kws)
+
+    def set_psd(self, psd: jd.PowerSpectrum | Array, **kws) -> None:
+        """Add PSD to detector.
+
+        Arguments
+        ---------
+        psd : jd.PowerSpectrum | Array
+            PSD to be added to the detector, either as a `jd.PowerSpectrum`
+            object or as a timeseries array.
+        kws : dict
+            Additional keyword arguments to pass to `jd.PowerSpectrum`
+            constructor.
+        """
+        if isinstance(psd, jd.PowerSpectrum):
+            self.psd = psd
+        else:
+            # not clear if we want to support this
+            self.psd = jd.PowerSpectrum(psd, **kws)
 
 
 H1 = GroundBased2G(

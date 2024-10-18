@@ -11,10 +11,11 @@ from scipy.interpolate import interp1d
 
 from jimgw.base import LikelihoodBase
 from jimgw.prior import Prior
-from jimgw.single_event.detector import Detector
+from jimgw.single_event.detector import Detector, GroundBased2G
 from jimgw.utils import log_i0
 from jimgw.single_event.waveform import Waveform
 from jimgw.transforms import BijectiveTransform, NtoMTransform
+import logging
 
 
 class SingleEventLikelihood(LikelihoodBase):
@@ -40,31 +41,37 @@ class TransientLikelihoodFD(SingleEventLikelihood):
         self,
         detectors: list[Detector],
         waveform: Waveform,
+        f_min: float = 0,
+        f_max: float = float("inf"),
         trigger_time: float = 0,
-        duration: float = 4,
         post_trigger_duration: float = 2,
-        # TODO: apply f_min and f_max and get frequency domain data
-        # here
         **kwargs,
     ) -> None:
         self.detectors = detectors
-        assert jnp.all(
-            jnp.array(
-                [
-                    (self.detectors[0].frequencies == detector.frequencies).all()  # type: ignore
-                    for detector in self.detectors
-                ]
-            )
+
+        # TODO: we can probably make this a bit more elegant
+        for det in detectors:
+            if not det.data.has_fd:
+                logging.info("Computing FFT with default window")
+                det.data.fft()
+            det.set_frequency_bounds(f_min, f_max)
+
+        freqs = [d.data.frequency_slice(f_min, f_max)[1] for d in detectors]
+        assert all([
+            (freqs[0]
+             == freq).all()  # noqa: W503
+            for freq in freqs]
         ), "The detectors must have the same frequency grid"
-        self.frequencies = self.detectors[0].frequencies  # type: ignore
+        self.frequencies = freqs[0]  # type: ignore
         self.waveform = waveform
         self.trigger_time = trigger_time
         self.gmst = (
-            Time(trigger_time, format="gps").sidereal_time("apparent", "greenwich").rad
+            Time(trigger_time, format="gps").sidereal_time("apparent",
+                                                           "greenwich").rad
         )
 
         self.trigger_time = trigger_time
-        self.duration = duration
+        self.duration = duration = self.detectors[0].data.duration
         self.post_trigger_duration = post_trigger_duration
         self.kwargs = kwargs
         if "marginalization" in self.kwargs:
@@ -647,10 +654,12 @@ def original_likelihood(
     df = freqs[1] - freqs[0]
     for detector in detectors:
         h_dec = detector.fd_response(freqs, h_sky, params) * align_time
+        data = detector.fd_data_slice
+        psd = detector.psd_slice
         match_filter_SNR = (
-            4 * jnp.sum((jnp.conj(h_dec) * detector.data) / detector.psd * df).real
+            4 * jnp.sum((jnp.conj(h_dec) * data) / psd * df).real
         )
-        optimal_SNR = 4 * jnp.sum(jnp.conj(h_dec) * h_dec / detector.psd * df).real
+        optimal_SNR = 4 * jnp.sum(jnp.conj(h_dec) * h_dec / psd * df).real
         log_likelihood += match_filter_SNR - optimal_SNR / 2
 
     return log_likelihood
