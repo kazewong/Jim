@@ -98,6 +98,7 @@ class Data(ABC):
         window: array, optional
             Window function to apply to the data before FFT (default: None)
         """
+        self.name = name or ''
         self.td = td
         self.fd = jnp.zeros(self.n_freq)
         self.delta_t = delta_t
@@ -106,7 +107,6 @@ class Data(ABC):
             self.set_tukey_window()
         else:
             self.window = window
-        self.name = name or ''
 
     def __repr__(self):
         return f"{self.__class__.__name__}(name='{self.name}', " + \

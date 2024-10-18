@@ -26,6 +26,7 @@ from jimgw.single_event.transforms import (
 )
 from jimgw.single_event.utils import Mc_q_to_m1_m2
 from flowMC.strategy.optimization import optimization_Adam
+from jimgw.single_event import data as jd
 
 jax.config.update("jax_enable_x64", True)
 
@@ -36,16 +37,30 @@ jax.config.update("jax_enable_x64", True)
 total_time_start = time.time()
 
 # first, fetch a 4s segment centered on GW150914
+# for the analysis
 gps = 1126259462.4
 start = gps - 2
 end = gps + 2
+
+# fetch 4096s of data to estimate the PSD (to be
+# careful we should avoid the on-source segment,
+# but we don't do this in this example)
+psd_start = gps - 2048
+psd_end = gps + 2048
+
+# define frequency integration bounds for the likelihood
 fmin = 20.0
-fmax = 1024.0
+fmax = 1000.0
 
 ifos = [H1, L1]
 
-H1.load_data(gps, 2, 2, fmin, fmax, psd_pad=16, tukey_alpha=0.2)
-L1.load_data(gps, 2, 2, fmin, fmax, psd_pad=16, tukey_alpha=0.2)
+for ifo in ifos:
+    data = jd.Data.from_gwosc(ifo.name, start, end)
+    ifo.set_data(data)
+    
+    psd_data = jd.Data.from_gwosc(ifo.name, psd_start, psd_end)
+    psd_fftlength = data.duration * data.sampling_frequency
+    ifo.set_psd(psd_data.to_psd(nperseg=psd_fftlength))
 
 waveform = RippleIMRPhenomPv2(f_ref=20)
 
