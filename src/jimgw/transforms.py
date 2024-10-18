@@ -87,7 +87,9 @@ class NtoNTransform(NtoMTransform):
         output_params = self.transform_func(transform_params)
         jacobian = jax.jacfwd(self.transform_func)(transform_params)
         jacobian = jnp.array(jax.tree.leaves(jacobian))
-        jacobian = jnp.log(jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim))))
+        jacobian = jnp.log(
+            jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim)))
+        )
         jax.tree.map(
             lambda key: x_copy.pop(key),
             self.name_mapping[0],
@@ -124,7 +126,9 @@ class BijectiveTransform(NtoNTransform):
         output_params = self.inverse_transform_func(transform_params)
         jacobian = jax.jacfwd(self.inverse_transform_func)(transform_params)
         jacobian = jnp.array(jax.tree.leaves(jacobian))
-        jacobian = jnp.log(jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim))))
+        jacobian = jnp.log(
+            jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim)))
+        )
         jax.tree.map(
             lambda key: y_copy.pop(key),
             self.name_mapping[1],
@@ -294,6 +298,64 @@ class LogitTransform(BijectiveTransform):
             name_mapping[0][i]: jnp.log(
                 x[name_mapping[1][i]] / (1 - x[name_mapping[1][i]])
             )
+            for i in range(len(name_mapping[1]))
+        }
+
+
+@jaxtyped(typechecker=typechecker)
+class SineTransform(BijectiveTransform):
+    """
+    Sine transformation
+
+    The original parameter is expected to be in [-pi/2, pi/2]
+
+    Parameters
+    ----------
+    name_mapping : tuple[list[str], list[str]]
+            The name mapping between the input and output dictionary.
+
+    """
+
+    def __init__(
+        self,
+        name_mapping: tuple[list[str], list[str]],
+    ):
+        super().__init__(name_mapping)
+        self.transform_func = lambda x: {
+            name_mapping[1][i]: jnp.sin(x[name_mapping[0][i]])
+            for i in range(len(name_mapping[0]))
+        }
+        self.inverse_transform_func = lambda x: {
+            name_mapping[0][i]: jnp.arcsin(x[name_mapping[1][i]])
+            for i in range(len(name_mapping[1]))
+        }
+
+
+@jaxtyped(typechecker=typechecker)
+class CosineTransform(BijectiveTransform):
+    """
+    Cosine transformation
+
+    The original parameter is expected to be in [0, pi]
+
+    Parameters
+    ----------
+    name_mapping : tuple[list[str], list[str]]
+            The name mapping between the input and output dictionary.
+
+    """
+
+    def __init__(
+        self,
+        name_mapping: tuple[list[str], list[str]],
+    ):
+        super().__init__(name_mapping)
+        self.transform_func = lambda x: {
+            name_mapping[1][i]: jnp.cos(x[name_mapping[0][i]])
+            for i in range(len(name_mapping[0]))
+        }
+        self.inverse_transform_func = lambda x: {
+            name_mapping[0][i]: jnp.arccos(x[name_mapping[1][i]])
             for i in range(len(name_mapping[1]))
         }
 
