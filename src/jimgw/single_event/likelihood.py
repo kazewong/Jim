@@ -47,6 +47,9 @@ class TransientLikelihoodFD(SingleEventLikelihood):
         post_trigger_duration: Float = 2,
         **kwargs,
     ) -> None:
+        # NOTE: having 'kwargs' here makes it very difficult to diagnose
+        # errors and keep track of what's going on, would be better to list
+        # explicitly what the arguments are accepted
         self.detectors = detectors
 
         # make sure data has a Fourier representation

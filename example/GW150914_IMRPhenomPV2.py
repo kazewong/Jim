@@ -49,19 +49,26 @@ psd_start = gps - 2048
 psd_end = gps + 2048
 
 # define frequency integration bounds for the likelihood
+# we set fmax to 87.5% of the Nyquist frequency to avoid
+# data corrupted by the GWOSC antialiasing filter
+# (Note that Data.from_gwosc will pull data sampled at
+# 4096 Hz by default)
 fmin = 20.0
-fmax = 1000.0
+fmax = 896.0
 
 ifos = [H1, L1]
 
 for ifo in ifos:
+    # set analysis data
     data = jd.Data.from_gwosc(ifo.name, start, end)
     ifo.set_data(data)
 
+    # set PSD (Welch estimate)
     psd_data = jd.Data.from_gwosc(ifo.name, psd_start, psd_end)
     psd_fftlength = data.duration * data.sampling_frequency
     ifo.set_psd(psd_data.to_psd(nperseg=psd_fftlength))
 
+# define the approximant to use
 waveform = RippleIMRPhenomPv2(f_ref=20)
 
 ###########################################
@@ -154,7 +161,7 @@ likelihood_transforms = [
 
 
 likelihood = TransientLikelihoodFD(
-    [H1, L1], waveform=waveform, trigger_time=gps, duration=4, post_trigger_duration=2
+    [H1, L1], waveform=waveform, f_min=fmin, f_max=fmax, trigger_time=gps
 )
 
 
@@ -163,8 +170,8 @@ mass_matrix = jnp.eye(prior.n_dim)
 # mass_matrix = mass_matrix.at[9, 9].set(1e-3)
 local_sampler_arg = {"step_size": mass_matrix * 1e-3}
 
-Adam_optimizer = optimization_Adam(
-    n_steps=3000, learning_rate=0.01, noise_level=1)
+# Adam_optimizer = optimization_Adam(
+#     n_steps=3000, learning_rate=0.01, noise_level=1)
 
 
 n_epochs = 20
