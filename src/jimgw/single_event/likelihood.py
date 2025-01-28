@@ -612,7 +612,7 @@ class HeterodynedTransientLikelihoodFD(TransientLikelihoodFD):
             initial_position = initial_position.at[
                 non_finite_index[:common_length]
             ].set(guess[:common_length])
-        
+
         rng_key, optimized_positions, summary = optimizer.optimize(
             jax.random.PRNGKey(12094), y, initial_position
         )
