@@ -111,3 +111,28 @@ class TestUnivariatePrior:
         negative_alpha = [-0.5, -1.5, -2.0, -2.5, -3.0, -3.5, -4.0, -4.5, -5.0]
         for alpha_val in negative_alpha:
             func(alpha_val)
+
+
+class TestMultivariatePrior:
+    def test_uniform_periodic(self):
+        xmin, xmax = 0.0, 2.0 * jnp.pi
+        p = UniformPeriodicPrior(xmin, xmax, ["x"])
+        # Check that all the samples are finite
+        samples = p.sample(jax.random.PRNGKey(0), 10000)
+        assert jnp.all(jnp.isfinite(samples['x']))
+        # Check that the log_prob is finite
+        log_prob = jax.vmap(p.log_prob)(samples)
+        assert jnp.all(jnp.isfinite(log_prob))
+        # Check that the log_prob is correct in the support
+        def log_prob_true(r, xmin, xmax):
+            log_prob = stats.rayleigh.logpdf(r) + jnp.log(1.0 / (xmax - xmin))
+            return log_prob
+        x = trace_prior_parent(p, [])[0].add_name(jnp.linspace(-10.0, 10.0, 1000)[None])
+        x.update(trace_prior_parent(p, [])[1].add_name(jnp.linspace(-10.0, 10.0, 1000)[None]))
+        y = jax.vmap(p.transform)(x)
+        assert jnp.allclose(jax.vmap(p.log_prob)(y), log_prob_true(y['x_base_r'], xmin, xmax))
+        # Check that the log_prob is uniform for same x_base_r
+        for r in jnp.linspace(0.1, 10.0, 10):
+            x = {"x_base_r": jnp.full(1000, r), "x": jnp.linspace(xmin, xmax, 1000)}
+            assert jnp.allclose(jax.vmap(p.log_prob)(x), log_prob_true(r, xmin, xmax))
+            
