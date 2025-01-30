@@ -87,7 +87,9 @@ class NtoNTransform(NtoMTransform):
         output_params = self.transform_func(transform_params)
         jacobian = jax.jacfwd(self.transform_func)(transform_params)
         jacobian = jnp.array(jax.tree.leaves(jacobian))
-        jacobian = jnp.log(jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim))))
+        jacobian = jnp.log(
+            jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim)))
+        )
         jax.tree.map(
             lambda key: x_copy.pop(key),
             self.name_mapping[0],
@@ -124,7 +126,9 @@ class BijectiveTransform(NtoNTransform):
         output_params = self.inverse_transform_func(transform_params)
         jacobian = jax.jacfwd(self.inverse_transform_func)(transform_params)
         jacobian = jnp.array(jax.tree.leaves(jacobian))
-        jacobian = jnp.log(jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim))))
+        jacobian = jnp.log(
+            jnp.absolute(jnp.linalg.det(jacobian.reshape(self.n_dim, self.n_dim)))
+        )
         jax.tree.map(
             lambda key: y_copy.pop(key),
             self.name_mapping[1],
@@ -515,6 +519,88 @@ class ParetoTransform(BijectiveTransform):
                 / jnp.log(self.xmax / self.xmin)
             )
             for i in range(len(name_mapping[1]))
+        }
+
+
+@jaxtyped(typechecker=typechecker)
+class CartesianToPolarTransform(BijectiveTransform):
+    """
+    Periodic transformation
+    Parameters
+    ----------
+    parameter_name : str
+            The name of the parameter to be transformed.
+    """
+
+    def __init__(
+        self,
+        parameter_name: str,
+    ):
+        super().__init__(
+            name_mapping=(
+                [f"{parameter_name}_x", f"{parameter_name}_y"],
+                [f"{parameter_name}_theta", f"{parameter_name}_r"],
+            )
+        )
+        self.transform_func = lambda x: {
+            f"{parameter_name}_theta": jnp.arctan2(
+                x[f"{parameter_name}_y"], x[f"{parameter_name}_x"]
+            )
+            + jnp.pi,
+            f"{parameter_name}_r": jnp.sqrt(
+                x[f"{parameter_name}_x"] ** 2 + x[f"{parameter_name}_y"] ** 2
+            ),
+        }
+        self.inverse_transform_func = lambda x: {
+            f"{parameter_name}_x": x[f"{parameter_name}_r"]
+            * jnp.cos(x[f"{parameter_name}_theta"]),
+            f"{parameter_name}_y": x[f"{parameter_name}_r"]
+            * jnp.sin(x[f"{parameter_name}_theta"]),
+        }
+
+
+@jaxtyped(typechecker=typechecker)
+class PeriodicTransform(BijectiveTransform):
+    """
+    Periodic transformation
+    Parameters
+    ----------
+    parameter_name : str
+            The name of the parameter to be transformed.
+    """
+
+    def __init__(
+        self,
+        name_mapping: tuple[list[str], list[str]],
+        xmin: Float,
+        xmax: Float,
+    ):
+        super().__init__(name_mapping)
+        self.xmin = xmin
+        self.xmax = xmax
+        self.transform_func = lambda x: {
+            f"{name_mapping[1][0]}": x[name_mapping[0][0]]
+            * jnp.cos(
+                2 * jnp.pi * (x[name_mapping[0][1]] - self.xmin) / (self.xmax - self.xmin)
+            ),
+            f"{name_mapping[1][1]}": x[name_mapping[0][0]]
+            * jnp.sin(
+                2 * jnp.pi * (x[name_mapping[0][1]] - self.xmin) / (self.xmax - self.xmin)
+            ),
+        }
+        self.inverse_transform_func = lambda x: {
+            name_mapping[0][1]: self.xmin
+            + (self.xmax - self.xmin)
+            * (
+                0.5
+                + jnp.arctan2(
+                    x[name_mapping[1][1]], x[name_mapping[1][0]]
+                )
+                / (2 * jnp.pi)
+            ),
+            name_mapping[0][0]: jnp.sqrt(
+                x[name_mapping[1][0]] ** 2 + x[name_mapping[1][1]] ** 2
+            ),
         }
 
 

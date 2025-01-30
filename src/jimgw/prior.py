@@ -9,6 +9,7 @@ from jaxtyping import Array, Float, PRNGKeyArray, jaxtyped
 from jimgw.transforms import (
     BijectiveTransform,
     LogitTransform,
+    CartesianToPolarTransform,
     ScaleTransform,
     OffsetTransform,
     ArcSineTransform,
@@ -343,8 +344,66 @@ class UniformSpherePrior(CombinePrior):
             [
                 UniformPrior(0.0, max_mag, [self.parameter_names[0]]),
                 SinePrior([self.parameter_names[1]]),
-                UniformPrior(0.0, 2 * jnp.pi, [self.parameter_names[2]]),
+                UniformPeriodicPrior(0.0, 2 * jnp.pi, [self.parameter_names[2]]),
             ]
+        )
+
+
+@jaxtyped(typechecker=typechecker)
+class UniformPeriodicPrior(SequentialTransformPrior):
+    xmin: float
+    xmax: float
+
+    def __repr__(self):
+        return f"UniformPeriodicPrior(xmin={self.xmin}, xmax={self.xmax}, parameter_names={self.parameter_names})"
+
+    def __init__(
+        self,
+        xmin: float,
+        xmax: float,
+        parameter_names: list[str],
+    ):
+        self.parameter_names = parameter_names
+        assert self.n_dim == 1, "UniformPeriodicPrior needs to be 1D distributions"
+        self.xmax = xmax
+        self.xmin = xmin
+        # create the base prior
+        base_prior = [
+            StandardNormalDistribution(
+                [
+                    f"{self.parameter_names[0]}_base_x",
+                ]
+            ),
+            StandardNormalDistribution(
+                [
+                    f"{self.parameter_names[0]}_base_y",
+                ]
+            ),
+        ]
+
+        super().__init__(
+            CombinePrior(priors=base_prior),
+            [
+                CartesianToPolarTransform(f"{parameter_names[0]}_base"),
+                ScaleTransform(
+                    (
+                        [
+                            f"{self.parameter_names[0]}_base_theta",
+                        ],
+                        [
+                            f"{self.parameter_names[0]}-({xmin})",
+                        ],
+                    ),
+                    (xmax - xmin) / 2.0 / jnp.pi,
+                ),
+                OffsetTransform(
+                    (
+                        [f"{self.parameter_names[0]}-({xmin})"],
+                        [self.parameter_names[0]],
+                    ),
+                    xmin,
+                ),
+            ],
         )
 
 
